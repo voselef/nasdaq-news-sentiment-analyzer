@@ -44,6 +44,8 @@ GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 GEMINI_MIN_INTERVAL_SECONDS: int = int(os.getenv("GEMINI_MIN_INTERVAL_SECONDS", "60"))
 GEMINI_TIMEOUT_SECONDS: int = int(os.getenv("GEMINI_TIMEOUT_SECONDS", "20"))
 
+#FILTER SETTINGS
+CONFIDENCE_LEVEL: float = float(os.getenv("CONFIDENCE_LEVEL"))
 
 def setup_logging() -> logging.Logger:
     numeric_level = getattr(logging, LOG_LEVEL, logging.INFO)

@@ -15,6 +15,8 @@ from typing import Optional
 
 logger = logging.getLogger("nasdaq_bot.trade_signal")
 
+from config import CONFIDENCE_LEVEL
+
 # ─── Sinyal Sabitleri ───────────────────────────────────────────────────────────
 
 class Action:
@@ -99,7 +101,7 @@ _DECISION_MATRIX: dict[tuple[str, str], tuple[str, str]] = {
 }
 
 # Minimum güven eşiği: altındaysa sinyal üretilmez (HOLD)
-_MIN_CONFIDENCE_FOR_SIGNAL = 0.50
+_MIN_CONFIDENCE_FOR_SIGNAL = CONFIDENCE_LEVEL
 
 # Ticker yoksa işlem önerilmez
 _NO_TICKER_ACTION = Action.WATCH
