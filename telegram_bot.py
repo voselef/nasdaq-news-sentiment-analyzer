@@ -187,11 +187,24 @@ def _format_news_message(article: dict, analysis: dict) -> str:
         f"📡 <b>Kaynak:</b> {source}",
         f"🕐 <b>Tarih:</b> <i>{date_str}</i>",
     ]
+    ai_note = (analysis.get("ai_note") or "").strip()
+    if ai_note:
+        ai_model = _escape_html(str(analysis.get("ai_model") or "Gemini"))
+        ai_tickers = analysis.get("ai_tickers") or tickers
+        ai_tickers_str = ", ".join(ai_tickers) if ai_tickers else "Tespit edilemedi"
+        lines.extend(
+            [
+                "",
+                f"🤖 <b>AI Notu ({ai_model}):</b> {_escape_html(ai_note)}",
+                f"🎯 <b>AI Etkilenenler:</b> <code>{_escape_html(ai_tickers_str)}</code>",
+            ]
+        )
     return "\n".join(lines)
 
 
 def _escape_html(text: str) -> str:
     """HTML özel karakterlerini kaçırır."""
+    text = str(text or "")
     return (
         text.replace("&", "&amp;")
         .replace("<", "&lt;")

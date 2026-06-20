@@ -217,3 +217,20 @@ Add it to the `TICKER_MAP` dictionary in `entity_extractor.py`:
 This bot is for **research and informational purposes only**.
 The generated trade signals **do not constitute financial advice**.
 Please consult a financial advisor before using it with real money.
+
+---
+
+## Gemini AI Notes
+
+Add these values to `.env` to enable Gemini-powered affected ticker detection and
+a short AI note in Telegram reports:
+
+```env
+GEMINI_API_KEY=your_google_gemini_api_key
+GEMINI_MODEL=gemini-2.5-flash
+GEMINI_MIN_INTERVAL_SECONDS=60
+GEMINI_TIMEOUT_SECONDS=20
+```
+
+Gemini is called at most once per minute. If the limit, quota, or API request
+fails, the bot sends the regular non-AI report.

@@ -1,43 +1,56 @@
 """
-gemini_client.py - Gemini ile haberin etkiledigi hisseleri ve AI notunu uretir.
+gemini_client.py - Gemini destekli haber yorumu ve ticker etki analizi.
 """
 
 from __future__ import annotations
 
 import json
 import logging
-from typing import Any
+import re
+import time
+from datetime import datetime, timezone
+from typing import Optional
 
 import requests
 
 import config
+import database
 
 logger = logging.getLogger("nasdaq_bot.gemini")
 
-_GEMINI_ENDPOINT = (
-    "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
-)
+_STATE_LAST_CALL_KEY = "gemini_last_call_at"
+_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+_TICKER_RE = re.compile(r"^[A-Z][A-Z0-9.\-]{0,7}$")
 
 
 class GeminiClient:
-    """Google Gemini REST API icin hafif istemci."""
+    """Gemini REST API ile haberden etkilenen hisseleri ve kisa AI notunu alir."""
 
     def __init__(self) -> None:
         self._api_key = config.GEMINI_API_KEY
         self._model = config.GEMINI_MODEL
+        self._min_interval = config.GEMINI_MIN_INTERVAL_SECONDS
+        self._timeout = config.GEMINI_TIMEOUT_SECONDS
         self._session = requests.Session()
 
-    @property
-    def enabled(self) -> bool:
-        return bool(self._api_key)
-
-    def analyze_news(self, article: dict, fallback_tickers: list[str]) -> dict | None:
-        """Haber metnini Gemini'ye yollar; basarisiz olursa None doner."""
-        if not self.enabled:
-            logger.info("Gemini API anahtari yok; AI yorumlama atlandi.")
+    def analyze_article(
+        self,
+        article: dict,
+        candidate_tickers: Optional[list[str]] = None,
+        force: bool = False,
+    ) -> Optional[dict]:
+        if not self._api_key:
+            logger.debug("GEMINI_API_KEY tanimli degil; Gemini analizi atlandi.")
             return None
 
-        prompt = _build_prompt(article, fallback_tickers)
+        if not force and not self._can_call_now():
+            logger.info("Gemini dakika limiti nedeniyle AI yorumu atlandi.")
+            return None
+
+        if not force:
+            self._mark_call_now()
+
+        prompt = _build_prompt(article, candidate_tickers or [])
         payload = {
             "contents": [{"parts": [{"text": prompt}]}],
             "generationConfig": {
@@ -46,117 +59,120 @@ class GeminiClient:
                 "responseMimeType": "application/json",
             },
         }
-        url = _GEMINI_ENDPOINT.format(model=self._model)
-        headers = {
-            "x-goog-api-key": self._api_key,
-            "Content-Type": "application/json",
-        }
+        url = _API_URL.format(model=self._model)
 
         try:
             response = self._session.post(
                 url,
-                headers=headers,
+                headers={
+                    "x-goog-api-key": self._api_key,
+                    "Content-Type": "application/json",
+                },
                 json=payload,
-                timeout=config.GEMINI_TIMEOUT_SECONDS,
+                timeout=self._timeout,
             )
-            if response.status_code in (429, 403):
+            if response.status_code in {429, 500, 502, 503, 504}:
                 logger.warning(
-                    "Gemini limit/yetki hatasi (%s); AI'siz rapora geciliyor.",
+                    "Gemini gecici/kota hatasi (%s); AI'siz rapor kullanilacak.",
                     response.status_code,
                 )
                 return None
             response.raise_for_status()
-            text = _extract_response_text(response.json())
-            parsed = _parse_json_object(text)
-            if parsed is None:
-                logger.warning("Gemini cevabi JSON olarak okunamadi: %s", text[:200])
-                return None
-
-            tickers = _clean_tickers(parsed.get("affected_tickers"))
-            note = str(parsed.get("ai_note") or "").strip()
-            if not note:
-                note = "Gemini haberi inceledi ancak ek yorum uretmedi."
-
-            return {
-                "affected_tickers": tickers,
-                "ai_note": note[:900],
-                "ai_provider": "gemini",
-                "ai_model": self._model,
-            }
+            return _parse_response(response.json(), self._model)
         except requests.exceptions.RequestException as exc:
-            logger.warning("Gemini API hatasi; AI'siz rapora geciliyor: %s", exc)
+            logger.warning("Gemini istegi basarisiz; AI'siz rapor kullanilacak: %s", exc)
             return None
         except Exception as exc:
-            logger.warning("Gemini yorumlama hatasi; AI'siz rapora geciliyor: %s", exc)
+            logger.warning("Gemini cevabi islenemedi; AI'siz rapor kullanilacak: %s", exc)
             return None
 
+    def _can_call_now(self) -> bool:
+        try:
+            last_call = database.get_state(_STATE_LAST_CALL_KEY)
+            if not last_call:
+                return True
+            return time.time() - float(last_call) >= self._min_interval
+        except Exception as exc:
+            logger.warning("Gemini limit durumu okunamadi; AI yorumu atlandi: %s", exc)
+            return False
 
-def _build_prompt(article: dict, fallback_tickers: list[str]) -> str:
+    def _mark_call_now(self) -> None:
+        try:
+            database.set_state(_STATE_LAST_CALL_KEY, str(time.time()))
+        except Exception as exc:
+            logger.warning("Gemini limit durumu yazilamadi: %s", exc)
+
+
+def _build_prompt(article: dict, candidate_tickers: list[str]) -> str:
     headline = article.get("headline") or ""
     summary = article.get("summary") or ""
     source = article.get("source") or ""
     published_at = article.get("published_at") or ""
-    fallback = ", ".join(fallback_tickers) if fallback_tickers else "Yok"
+    candidates = ", ".join(candidate_tickers) if candidate_tickers else "Yok"
 
     return f"""
-Sen ABD/NASDAQ haberlerini yorumlayan dikkatli bir finans haber analistisin.
-Bu haber hangi halka acik sirket hisselerini etkileyebilir, bunu belirle.
+You are a cautious US stock market news analyst.
+Analyze the news and identify which publicly traded stock tickers are likely affected.
+Use only tickers that are directly and reasonably connected to the news.
+You may use the candidate tickers, but you must correct them if the text implies different stocks.
 
-Kurallar:
-- Sadece haber metninden makul sekilde etkilenebilecek borsa sembollerini yaz.
-- Emin degilsen bos liste dondur.
-- Sembol formatini BUY/SELL degil, sadece ticker olarak ver: NVDA, AAPL gibi.
-- ai_note kisa Turkce olsun: neden bu hisseler etkilenebilir ve izleme onerisi.
-- Yatirim tavsiyesi verme; "izlenebilir", "risk takip edilmeli" gibi not yaz.
-- Cevabi sadece JSON olarak dondur.
-
-JSON semasi:
+Return only valid JSON with this shape:
 {{
-  "affected_tickers": ["TICKER1", "TICKER2"],
-  "ai_note": "Kisa Turkce yorum"
+  "affected_tickers": ["NVDA", "AMD"],
+  "ai_note": "Turkish, max 450 chars. Brief actionable-style note without claiming certainty.",
+  "confidence": 0.0
 }}
 
-Haber:
-Baslik: {headline}
-Ozet/Icerik: {summary}
-Kaynak: {source}
-Tarih: {published_at}
-Kelime tabanli mevcut tespit: {fallback}
+Candidate tickers from local rules: {candidates}
+Source: {source}
+Published at: {published_at}
+Headline: {headline}
+Summary: {summary}
 """.strip()
 
 
-def _extract_response_text(data: dict[str, Any]) -> str:
-    candidates = data.get("candidates") or []
-    if not candidates:
-        return ""
-    parts = candidates[0].get("content", {}).get("parts", [])
-    return "".join(str(part.get("text", "")) for part in parts)
-
-
-def _parse_json_object(text: str) -> dict | None:
-    text = (text or "").strip()
+def _parse_response(data: dict, model: str) -> Optional[dict]:
+    text = (
+        data.get("candidates", [{}])[0]
+        .get("content", {})
+        .get("parts", [{}])[0]
+        .get("text", "")
+    )
     if not text:
         return None
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError:
-        start = text.find("{")
-        end = text.rfind("}")
-        if start == -1 or end == -1 or end <= start:
-            return None
-        try:
-            return json.loads(text[start : end + 1])
-        except json.JSONDecodeError:
-            return None
+
+    parsed = json.loads(text)
+    tickers = _clean_tickers(parsed.get("affected_tickers", []))
+    note = str(parsed.get("ai_note", "")).strip()
+    confidence = _safe_float(parsed.get("confidence", 0.0))
+
+    if not tickers and not note:
+        return None
+
+    return {
+        "provider": "gemini",
+        "model": model,
+        "affected_tickers": tickers,
+        "ai_note": note[:700],
+        "confidence": confidence,
+        "generated_at": datetime.now(tz=timezone.utc).isoformat(),
+    }
 
 
-def _clean_tickers(value) -> list[str]:
-    if not isinstance(value, list):
+def _clean_tickers(raw_tickers) -> list[str]:
+    if not isinstance(raw_tickers, list):
         return []
 
     tickers: list[str] = []
-    for item in value:
-        ticker = str(item or "").strip().upper()
-        if ticker and ticker.replace(".", "").replace("-", "").isalnum():
-            tickers.append(ticker[:12])
-    return list(dict.fromkeys(tickers))
+    for raw in raw_tickers:
+        ticker = str(raw).strip().upper()
+        if _TICKER_RE.match(ticker) and ticker not in tickers:
+            tickers.append(ticker)
+    return tickers[:10]
+
+
+def _safe_float(value) -> float:
+    try:
+        return max(0.0, min(1.0, float(value)))
+    except (TypeError, ValueError):
+        return 0.0

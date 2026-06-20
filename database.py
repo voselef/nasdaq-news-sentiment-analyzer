@@ -179,8 +179,9 @@ def save_article(article: dict) -> bool:
     sql = """
         INSERT OR IGNORE INTO news_articles
         (article_id, headline, summary, source, url, published_at,
-         sentiment, confidence, impact_level, affected_tickers, raw_json)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         sentiment, confidence, impact_level, affected_tickers,
+         ai_note, ai_provider, ai_model, ai_tickers, raw_json)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """
 
     with get_connection() as conn:
@@ -197,6 +198,10 @@ def save_article(article: dict) -> bool:
             article.get("confidence"),
             article.get("impact_level"),
             json.dumps(article.get("affected_tickers", [])),
+            article.get("ai_note"),
+            article.get("ai_provider"),
+            article.get("ai_model"),
+            json.dumps(article.get("ai_tickers", [])),
             json.dumps(article.get("raw_json", {})),
         ))
 
@@ -241,7 +246,8 @@ def get_latest_article() -> Dict | None:
         cur = conn.cursor()
         cur.execute("""
             SELECT article_id, headline, summary, source, url, published_at,
-                   sentiment, confidence, impact_level, affected_tickers, raw_json
+                   sentiment, confidence, impact_level, affected_tickers,
+                   ai_note, ai_provider, ai_model, ai_tickers, raw_json
             FROM news_articles
             ORDER BY published_at DESC, id DESC
             LIMIT 1

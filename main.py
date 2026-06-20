@@ -24,6 +24,7 @@ import config
 import database
 from finnhub_client import FinnhubClient
 from entity_extractor import EntityExtractor
+from gemini_client import GeminiClient
 from sentiment import SentimentAnalyzer
 from telegram_bot import TelegramBot
 from trade_signal import TradeSignalEngine
@@ -68,6 +69,7 @@ class NasdaqBot:
         self.finnhub = FinnhubClient()
         self.extractor = EntityExtractor()
         self.analyzer = SentimentAnalyzer()
+        self.gemini = GeminiClient()
         self.signal_engine = TradeSignalEngine()
         self.telegram = TelegramBot()
 
@@ -123,7 +125,25 @@ class NasdaqBot:
                 "affected_tickers": [],
             }
 
-        # 4) Trade sinyali üretimi
+        # 4) Gemini ile ticker listesi ve AI notu zenginlestirme
+        try:
+            gemini_analysis = self.gemini.analyze_article(
+                article,
+                analysis.get("affected_tickers", []),
+            )
+            if gemini_analysis:
+                gemini_tickers = gemini_analysis.get("affected_tickers", [])
+                if gemini_tickers:
+                    analysis["affected_tickers"] = gemini_tickers
+                analysis["ai_note"] = gemini_analysis.get("ai_note")
+                analysis["ai_provider"] = gemini_analysis.get("provider")
+                analysis["ai_model"] = gemini_analysis.get("model")
+                analysis["ai_tickers"] = gemini_tickers
+                analysis["ai_confidence"] = gemini_analysis.get("confidence")
+        except Exception as exc:
+            logger.warning("Gemini analizi atlandi (%s): %s", article_id, exc)
+
+        # 5) Trade sinyali üretimi
         try:
             trade_signal = self.signal_engine.generate(article, analysis)
             analysis["trade_signal"] = trade_signal
@@ -131,7 +151,7 @@ class NasdaqBot:
             logger.warning("Trade sinyal hatası (%s): %s", article_id, exc)
             analysis["trade_signal"] = None
 
-        # 5) DB kaydı için veri hazırlama
+        # 6) DB kaydı için veri hazırlama
         affected_tickers = analysis.get("affected_tickers", [])
         db_record = {
             "article_id": article_id,
@@ -144,11 +164,15 @@ class NasdaqBot:
             "confidence": analysis.get("confidence_score"),
             "impact_level": analysis.get("impact_level"),
             "affected_tickers": affected_tickers if affected_tickers else None,
+            "ai_note": analysis.get("ai_note"),
+            "ai_provider": analysis.get("ai_provider"),
+            "ai_model": analysis.get("ai_model"),
+            "ai_tickers": analysis.get("ai_tickers"),
             "raw_json": json.dumps(article.get("raw", {}), default=str),
             "ticker_mentions": article.get("ticker_mentions", []),
         }
 
-        # 6) DB kayıt
+        # 7) DB kayıt
         try:
             saved = database.save_article(db_record)
             if not saved:
@@ -159,7 +183,7 @@ class NasdaqBot:
             self._error_count += 1
             return None
 
-        # 7) Telegram bildirimi
+        # 8) Telegram bildirimi
         try:
             self.telegram.send_news_alert(article, analysis)
         except Exception as exc:
@@ -352,6 +376,10 @@ class NasdaqBot:
             "confidence_score": float(latest.get("confidence") or 0.0),
             "impact_level": latest.get("impact_level") or "LOW",
             "affected_tickers": affected_tickers,
+            "ai_note": latest.get("ai_note"),
+            "ai_provider": latest.get("ai_provider"),
+            "ai_model": latest.get("ai_model"),
+            "ai_tickers": _json_list(latest.get("ai_tickers")),
         }
 
         try:
@@ -362,6 +390,42 @@ class NasdaqBot:
 
         logger.info("Son haber raporu tekrar gonderiliyor: %s", article["article_id"])
         return self.telegram.send_news_alert(article, analysis)
+
+    def test_last_news_ai(self, force: bool = False) -> bool:
+        """Veritabanindaki son haberi Gemini ile test eder ve sonucu yazdirir."""
+        latest = database.get_latest_article()
+        if latest is None:
+            print("Kayitli haber bulunamadi.")
+            return False
+
+        affected_tickers = _json_list(latest.get("affected_tickers"))
+        if not affected_tickers:
+            affected_tickers = [
+                mention["ticker"]
+                for mention in latest.get("ticker_mentions", [])
+                if mention.get("ticker")
+            ]
+
+        article = {
+            "article_id": latest.get("article_id"),
+            "headline": latest.get("headline"),
+            "summary": latest.get("summary"),
+            "source": latest.get("source"),
+            "url": latest.get("url"),
+            "published_at": latest.get("published_at"),
+            "ticker_mentions": latest.get("ticker_mentions", []),
+            "raw": _json_value(latest.get("raw_json"), {}),
+        }
+
+        result = self.gemini.analyze_article(article, affected_tickers, force=force)
+        output = {
+            "article_id": article.get("article_id"),
+            "headline": article.get("headline"),
+            "local_candidate_tickers": affected_tickers,
+            "gemini_result": result,
+        }
+        print(json.dumps(output, indent=2, ensure_ascii=False, default=str))
+        return result is not None
 
 
 # ─── CLI ────────────────────────────────────────────────────────────────────────
@@ -423,6 +487,16 @@ def _parse_args() -> argparse.Namespace:
         "--lastnew",
         action="store_true",
         help="Kayitli son haber raporunu Telegram'a tekrar gonder",
+    )
+    parser.add_argument(
+        "--test-ai",
+        action="store_true",
+        help="Kayitli son haberi Gemini ile test et ve sonucu ekrana yazdir",
+    )
+    parser.add_argument(
+        "--force-ai",
+        action="store_true",
+        help="--test-ai icin Gemini dakika limitini bypass et",
     )
     parser.add_argument(
         "--test-telegram",
@@ -496,6 +570,10 @@ def main() -> None:
     # ── Tek sefer ───────────────────────────────────────────────────────────────
     if args.lastnew:
         ok = bot.resend_last_news_report()
+        sys.exit(0 if ok else 1)
+
+    if args.test_ai:
+        ok = bot.test_last_news_ai(force=args.force_ai)
         sys.exit(0 if ok else 1)
 
     if args.once:
