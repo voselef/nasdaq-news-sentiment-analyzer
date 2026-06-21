@@ -212,13 +212,7 @@ Add it to the `TICKER_MAP` dictionary in `entity_extractor.py`:
 
 ---
 
-## ⚠️ Disclaimer
 
-This bot is for **research and informational purposes only**.
-The generated trade signals **do not constitute financial advice**.
-Please consult a financial advisor before using it with real money.
-
----
 
 ## Gemini AI Notes
 
@@ -234,3 +228,15 @@ GEMINI_TIMEOUT_SECONDS=20
 
 Gemini is called at most once per minute. If the limit, quota, or API request
 fails, the bot sends the regular non-AI report.
+---
+
+## ⚠️ Disclaimer
+
+This bot is for **research and informational purposes only**.
+The generated trade signals **do not constitute financial advice**.
+Please consult a financial advisor before using it with real money.
+
+---
+## ❕Acknowledgements
+
+Parts of this project were developed with the assistance of AI coding tools, including ChatGPT, Claude and Gemini.
