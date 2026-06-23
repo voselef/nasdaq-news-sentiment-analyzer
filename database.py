@@ -289,3 +289,37 @@ def get_stats() -> dict:
         "total_articles": total,
         "by_sentiment": by_sentiment
     }
+def delete_latest_article() -> bool:
+    with get_connection() as conn:
+        cur = conn.cursor()
+
+        cur.execute("""
+            SELECT article_id
+            FROM news_articles
+            ORDER BY published_at DESC, id DESC
+            LIMIT 1
+        """)
+
+        row = cur.fetchone()
+
+        if not row:
+            return False
+
+        article_id = row["article_id"]
+
+        cur.execute(
+            "DELETE FROM ticker_mentions WHERE article_id = ?",
+            (article_id,),
+        )
+
+        cur.execute(
+            "DELETE FROM news_articles WHERE article_id = ?",
+            (article_id,),
+        )
+
+        cur.execute(
+            "DELETE FROM seen_articles WHERE article_id = ?",
+            (article_id,),
+        )
+
+        return True

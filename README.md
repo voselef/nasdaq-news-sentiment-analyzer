@@ -95,14 +95,14 @@ A production-grade NASDAQ news analysis and trade signal system integrated with 
 
 ## 🚀 Execution
 
-| Command | Description |
-| :--- | :--- |
-| `python main.py` | Continuous loop (default, at `FETCH_INTERVAL_SECONDS` interval) |
-| `python main.py --once` | Run once (cron compatible) |
-| `python main.py --init-db` | Only setup the DB schema |
-| `python main.py --stats` | Print DB statistics to the screen |
-| `python main.py --summary` | Send a daily summary to Telegram |
-| `python main.py --test-telegram` | Test the Telegram connection |
+| Command                          | Description                                                     |
+|:---------------------------------|:----------------------------------------------------------------|
+| `python main.py`                 | Continuous loop (default, at `FETCH_INTERVAL_SECONDS` interval) |
+| `python main.py --once`          | Run once (cron compatible)                                      |
+| `python main.py --init-db`       | Only setup the DB schema                                        |
+| `python main.py --stats`         | Print DB statistics to the screen                               |
+| `python main.py --summary`       | Send a daily summary to Telegram                                |
+| `python main.py --test-telegram` | Test the Telegram connection                                    |
 
 ### Cron Example (every 5 minutes)
 
@@ -131,27 +131,27 @@ A production-grade NASDAQ news analysis and trade signal system integrated with 
 
 ### `news_articles`
 
-| Column | Type | Description |
-| :--- | :--- | :--- |
-| `article_id` | TEXT UNIQUE | Finnhub unique ID |
-| `headline` | TEXT | News headline |
-| `summary` | TEXT | Summary |
-| `source` | TEXT | News source |
-| `url` | TEXT | Link |
-| `published_at` | TIMESTAMPTZ | Publish date |
-| `sentiment` | TEXT | positive/negative/neutral |
-| `confidence` | NUMERIC | 0.0–1.0 |
-| `impact_level` | TEXT | LOW/MEDIUM/HIGH |
-| `affected_tickers` | TEXT[] | NVDA, AMD… |
-| `raw_json` | JSONB | Original API response |
+| Column             | Type        | Description               |
+|:-------------------|:------------|:--------------------------|
+| `article_id`       | TEXT UNIQUE | Finnhub unique ID         |
+| `headline`         | TEXT        | News headline             |
+| `summary`          | TEXT        | Summary                   |
+| `source`           | TEXT        | News source               |
+| `url`              | TEXT        | Link                      |
+| `published_at`     | TIMESTAMPTZ | Publish date              |
+| `sentiment`        | TEXT        | positive/negative/neutral |
+| `confidence`       | NUMERIC     | 0.0–1.0                   |
+| `impact_level`     | TEXT        | LOW/MEDIUM/HIGH           |
+| `affected_tickers` | TEXT[]      | NVDA, AMD…                |
+| `raw_json`         | JSONB       | Original API response     |
 
 ### `ticker_mentions`
 
-| Column | Type | Description |
-| :--- | :--- | :--- |
+| Column       | Type | Description        |
+|:-------------|:-----|:-------------------|
 | `article_id` | TEXT | FK → news_articles |
-| `ticker` | TEXT | NVDA |
-| `company` | TEXT | Nvidia |
+| `ticker`     | TEXT | NVDA               |
+| `company`    | TEXT | Nvidia             |
 
 ---
 
@@ -235,8 +235,8 @@ fails, the bot sends the regular non-AI report.
 This bot is for **research and informational purposes only**.
 The generated trade signals **do not constitute financial advice**.
 Please consult a financial advisor before using it with real money.
-
 ---
+
 ## ❕Acknowledgements
 
 Parts of this project were developed with the assistance of AI coding tools, including ChatGPT, Claude and Gemini.

@@ -41,8 +41,12 @@ IMPACT_MEDIUM_THRESHOLD: float = 0.55
 # Gemini AI yorumlama
 GEMINI_API_KEY: str | None = os.getenv("GEMINI_API_KEY")
 GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
-GEMINI_MIN_INTERVAL_SECONDS: int = int(os.getenv("GEMINI_MIN_INTERVAL_SECONDS", "60"))
-GEMINI_TIMEOUT_SECONDS: int = int(os.getenv("GEMINI_TIMEOUT_SECONDS", "20"))
+AI_MIN_INTERVAL_SECONDS: int = int(os.getenv("GEMINI_MIN_INTERVAL_SECONDS", "60"))
+AI_TIMEOUT_SECONDS: int = int(os.getenv("GEMINI_TIMEOUT_SECONDS", "20"))
+
+#OpenRouter API
+OPENROUTER_API_KEY: str | None = os.getenv("OPENROUTER_API_KEY")
+OPENROUTER_MODEL: str | None = os.getenv("OPENROUTER_MODEL")
 
 #FILTER SETTINGS
 CONFIDENCE_LEVEL: float = float(os.getenv("CONFIDENCE_LEVEL"))

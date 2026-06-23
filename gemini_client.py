@@ -1,7 +1,3 @@
-"""
-gemini_client.py - Gemini destekli haber yorumu ve ticker etki analizi.
-"""
-
 from __future__ import annotations
 
 import json
@@ -16,21 +12,20 @@ import requests
 import config
 import database
 
-logger = logging.getLogger("nasdaq_bot.gemini")
+logger = logging.getLogger("nasdaq_bot.ai")
 
-_STATE_LAST_CALL_KEY = "gemini_last_call_at"
-_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+_STATE_LAST_CALL_KEY = "ai_last_call_at"
+_API_URL = "https://openrouter.ai/api/v1/chat/completions"
+
 _TICKER_RE = re.compile(r"^[A-Z][A-Z0-9.\-]{0,7}$")
 
 
-class GeminiClient:
-    """Gemini REST API ile haberden etkilenen hisseleri ve kisa AI notunu alir."""
-
+class AIClient:
     def __init__(self) -> None:
-        self._api_key = config.GEMINI_API_KEY
-        self._model = config.GEMINI_MODEL
-        self._min_interval = config.GEMINI_MIN_INTERVAL_SECONDS
-        self._timeout = config.GEMINI_TIMEOUT_SECONDS
+        self._api_key = config.OPENROUTER_API_KEY
+        self._model = config.OPENROUTER_MODEL
+        self._min_interval = config.AI_MIN_INTERVAL_SECONDS
+        self._timeout = config.AI_TIMEOUT_SECONDS
         self._session = requests.Session()
 
     def analyze_article(
@@ -39,68 +34,84 @@ class GeminiClient:
         candidate_tickers: Optional[list[str]] = None,
         force: bool = False,
     ) -> Optional[dict]:
+
         if not self._api_key:
-            logger.debug("GEMINI_API_KEY tanimli degil; Gemini analizi atlandi.")
+            logger.warning("API yokluğu nedeniyle atlandı")
             return None
 
         if not force and not self._can_call_now():
-            logger.info("Gemini dakika limiti nedeniyle AI yorumu atlandi.")
+            logger.warning("AI rate limit nedeniyle atlandı")
             return None
 
         if not force:
             self._mark_call_now()
 
         prompt = _build_prompt(article, candidate_tickers or [])
+
         payload = {
-            "contents": [{"parts": [{"text": prompt}]}],
-            "generationConfig": {
-                "temperature": 0.2,
-                "maxOutputTokens": 512,
-                "responseMimeType": "application/json",
-            },
+            "model": self._model,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": (
+                        "You are a cautious US stock market news analyst. "
+                        "Return ONLY valid JSON."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": prompt,
+                },
+            ],
+            "temperature": 0.2,
+            "response_format": {"type": "json_object"},
         }
-        url = _API_URL.format(model=self._model)
 
         try:
             response = self._session.post(
-                url,
+                _API_URL,
                 headers={
-                    "x-goog-api-key": self._api_key,
+                    "Authorization": f"Bearer {self._api_key}",
                     "Content-Type": "application/json",
                 },
                 json=payload,
                 timeout=self._timeout,
             )
+
             if response.status_code in {429, 500, 502, 503, 504}:
-                logger.warning(
-                    "Gemini gecici/kota hatasi (%s); AI'siz rapor kullanilacak.",
-                    response.status_code,
-                )
                 return None
+
             response.raise_for_status()
-            return _parse_response(response.json(), self._model)
+
+            return _parse_response(
+                response.json(),
+                self._model,
+            )
+
         except requests.exceptions.RequestException as exc:
-            logger.warning("Gemini istegi basarisiz; AI'siz rapor kullanilacak: %s", exc)
-            return None
-        except Exception as exc:
-            logger.warning("Gemini cevabi islenemedi; AI'siz rapor kullanilacak: %s", exc)
+            logger.warning("OpenRouter request failed: %s", exc)
             return None
 
     def _can_call_now(self) -> bool:
         try:
             last_call = database.get_state(_STATE_LAST_CALL_KEY)
+
             if not last_call:
                 return True
+
             return time.time() - float(last_call) >= self._min_interval
-        except Exception as exc:
-            logger.warning("Gemini limit durumu okunamadi; AI yorumu atlandi: %s", exc)
+
+        except Exception:
             return False
 
     def _mark_call_now(self) -> None:
         try:
-            database.set_state(_STATE_LAST_CALL_KEY, str(time.time()))
-        except Exception as exc:
-            logger.warning("Gemini limit durumu yazilamadi: %s", exc)
+            database.set_state(
+                _STATE_LAST_CALL_KEY,
+                str(time.time()),
+            )
+        except Exception:
+            pass
 
 
 def _build_prompt(article: dict, candidate_tickers: list[str]) -> str:
@@ -108,71 +119,94 @@ def _build_prompt(article: dict, candidate_tickers: list[str]) -> str:
     summary = article.get("summary") or ""
     source = article.get("source") or ""
     published_at = article.get("published_at") or ""
-    candidates = ", ".join(candidate_tickers) if candidate_tickers else "Yok"
+
+    candidates = (
+        ", ".join(candidate_tickers)
+        if candidate_tickers
+        else "Yok"
+    )
 
     return f"""
-You are a cautious US stock market news analyst.
-Analyze the news and identify which publicly traded stock tickers are likely affected.
-Use only tickers that are directly and reasonably connected to the news.
-You may use the candidate tickers, but you must correct them if the text implies different stocks.
+Analyze the news article.
 
-Return only valid JSON with this shape:
+Return JSON:
+
 {{
-  "affected_tickers": ["NVDA", "AMD"],
-  "ai_note": "Turkish, max 450 chars. Brief actionable-style note without claiming certainty.",
+  "affected_tickers": ["NVDA","AMD"],
+  "ai_note": "Turkish explanation",
   "confidence": 0.0
 }}
 
-Candidate tickers from local rules: {candidates}
+Candidate tickers: {candidates}
+
 Source: {source}
 Published at: {published_at}
-Headline: {headline}
-Summary: {summary}
-""".strip()
+
+Headline:
+{headline}
+
+Summary:
+{summary}
+"""
 
 
 def _parse_response(data: dict, model: str) -> Optional[dict]:
-    text = (
-        data.get("candidates", [{}])[0]
-        .get("content", {})
-        .get("parts", [{}])[0]
-        .get("text", "")
-    )
-    if not text:
+
+    try:
+        text = data["choices"][0]["message"]["content"]
+
+        parsed = json.loads(text)
+
+        tickers = _clean_tickers(
+            parsed.get("affected_tickers", [])
+        )
+
+        note = str(
+            parsed.get("ai_note", "")
+        ).strip()
+
+        confidence = _safe_float(
+            parsed.get("confidence", 0.0)
+        )
+
+        return {
+            "provider": "openrouter",
+            "model": model,
+            "affected_tickers": tickers,
+            "ai_note": note[:700],
+            "confidence": confidence,
+            "generated_at": datetime.now(
+                tz=timezone.utc
+            ).isoformat(),
+        }
+
+    except Exception:
         return None
-
-    parsed = json.loads(text)
-    tickers = _clean_tickers(parsed.get("affected_tickers", []))
-    note = str(parsed.get("ai_note", "")).strip()
-    confidence = _safe_float(parsed.get("confidence", 0.0))
-
-    if not tickers and not note:
-        return None
-
-    return {
-        "provider": "gemini",
-        "model": model,
-        "affected_tickers": tickers,
-        "ai_note": note[:700],
-        "confidence": confidence,
-        "generated_at": datetime.now(tz=timezone.utc).isoformat(),
-    }
 
 
 def _clean_tickers(raw_tickers) -> list[str]:
+
     if not isinstance(raw_tickers, list):
         return []
 
-    tickers: list[str] = []
+    result = []
+
     for raw in raw_tickers:
         ticker = str(raw).strip().upper()
-        if _TICKER_RE.match(ticker) and ticker not in tickers:
-            tickers.append(ticker)
-    return tickers[:10]
+
+        if _TICKER_RE.match(ticker):
+            if ticker not in result:
+                result.append(ticker)
+
+    return result[:10]
 
 
 def _safe_float(value) -> float:
+
     try:
-        return max(0.0, min(1.0, float(value)))
-    except (TypeError, ValueError):
+        return max(
+            0.0,
+            min(1.0, float(value)),
+        )
+    except Exception:
         return 0.0

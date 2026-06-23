@@ -24,7 +24,7 @@ import config
 import database
 from finnhub_client import FinnhubClient
 from entity_extractor import EntityExtractor
-from gemini_client import GeminiClient
+from gemini_client import AIClient
 from sentiment import SentimentAnalyzer
 from telegram_bot import TelegramBot
 from trade_signal import TradeSignalEngine
@@ -69,7 +69,7 @@ class NasdaqBot:
         self.finnhub = FinnhubClient()
         self.extractor = EntityExtractor()
         self.analyzer = SentimentAnalyzer()
-        self.gemini = GeminiClient()
+        self.gemini = AIClient()
         self.signal_engine = TradeSignalEngine()
         self.telegram = TelegramBot()
 
@@ -127,6 +127,8 @@ class NasdaqBot:
 
         # 4) Gemini ile ticker listesi ve AI notu zenginlestirme
         try:
+            logger.warning("AI çağrısı denenecek")
+            print(type(self.gemini))
             gemini_analysis = self.gemini.analyze_article(
                 article,
                 analysis.get("affected_tickers", []),
@@ -503,6 +505,11 @@ def _parse_args() -> argparse.Namespace:
         action="store_true",
         help="Telegram bağlantısını test et",
     )
+    parser.add_argument(
+        "--erase_last",
+        action="store_true",
+        help="Son haberi veritabanından sil",
+    )
     return parser.parse_args()
 
 
@@ -542,6 +549,15 @@ def main() -> None:
                 f"{str(a['published_at'])[:16]}  {a['headline'][:70]}"
             )
         sys.exit(0)
+    if args.erase_last:
+        ok = database.delete_latest_article()
+
+        if ok:
+            print("Son haber silindi ✓")
+            sys.exit(0)
+        else:
+            print("Silinecek haber bulunamadı ✗")
+            sys.exit(1)
 
     # ── DB başlatma (tüm diğer modlar için) ─────────────────────────────────────
     try:
